@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blob is not impressed</title>
+  <meta name="description" content="A herd of round, unbothered cats. Move your cursor and they follow it.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&family=Figtree:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+
+<header class="hero" id="top">
+  <nav class="nav" aria-label="Main">
+    <a class="wordmark" href="#top">blob</a>
+    <ul>
+      <li><a href="#moods">Moods</a></li>
+      <li><a href="#notes">Field notes</a></li>
+    </ul>
+  </nav>
+
+  <canvas id="herd" aria-label="A crowd of round white cats that follow your cursor with their eyes"></canvas>
+
+  <div class="hero-copy">
+    <h1>Blob is not impressed.</h1>
+    <p class="lede" id="lede">Thirty-four round cats, one shared opinion. Move your cursor and they'll follow it. Hover over one to make it hop, click to get a reaction.</p>
+    <p class="hint" id="hint" aria-live="polite">One of them is cooler than the rest.</p>
+  </div>
+  <noscript><p class="noscript">The herd needs JavaScript to show up.</p></noscript>
+</header>
+
+<main>
+  <section class="moods" id="moods" aria-labelledby="moods-title">
+    <div class="stage">
+      <canvas id="viewer" aria-label="Blob, showing the selected mood. Drag to turn it."></canvas>
+      <p class="stage-note">Drag to turn Blob, tap to make it hop</p>
+    </div>
+    <div>
+      <h2 id="moods-title">Seven moods, used sparingly.</h2>
+      <p class="intro">Blob has a short list of feelings and rations them carefully. Pick one to see it, or poke Blob to make it hop.</p>
+      <ul class="mood-list" id="mood-list">
+        <li><button type="button" data-mood="neutral" aria-pressed="true"><span class="mood-name">Unbothered</span><span class="mood-desc">Factory setting. Has seen everything, liked none of it.</span></button></li>
+        <li><button type="button" data-mood="greet" aria-pressed="false"><span class="mood-name">Hello</span><span class="mood-desc">Rare. Waves about once a season.</span></button></li>
+        <li><button type="button" data-mood="laugh" aria-pressed="false"><span class="mood-name">Laughing</span><span class="mood-desc">Something was funny. It won't tell you what.</span></button></li>
+        <li><button type="button" data-mood="angry" aria-pressed="false"><span class="mood-name">Grumpy</span><span class="mood-desc">Goes pink with rage. Still round about it.</span></button></li>
+        <li><button type="button" data-mood="sad" aria-pressed="false"><span class="mood-name">Sad</span><span class="mood-desc">Ears down, one tear. Back to normal in a minute.</span></button></li>
+        <li><button type="button" data-mood="surprised" aria-pressed="false"><span class="mood-name">Shook</span><span class="mood-desc">Jumps, lands, pretends that didn't happen.</span></button></li>
+        <li><button type="button" data-mood="sleepy" aria-pressed="false"><span class="mood-name">Sleepy</span><span class="mood-desc">Most of the day, honestly.</span></button></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="notes" id="notes" aria-labelledby="notes-title">
+    <div class="notes-inner">
+      <h2 id="notes-title">Field notes</h2>
+      <dl>
+        <div>
+          <dt>Round on purpose</dt>
+          <dd>No corners to bump into, no edges to get wrong. Blob is a soft egg with two ears and several opinions.</dd>
+        </div>
+        <div>
+          <dt>Mostly air</dt>
+          <dd>Breathes slowly, bounces when it laughs, squashes when it lands. That's the whole skeleton.</dd>
+        </div>
+        <div>
+          <dt>Looks up, never at you</dt>
+          <dd>Unless you move. Then every eye in the herd follows your cursor, reluctantly.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <p>Blob was sculpted in Blender, then rebuilt in Three.js for the browser.</p>
+  <a href="#top">Back to the herd</a>
+</footer>
+
+<script type="module">
+import * as THREE from 'three';
+
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const COARSE = matchMedia('(pointer: coarse)').matches;
+if (COARSE) document.getElementById('lede').textContent =
+  "Thirty-four round cats, one shared opinion. Drag your finger and they'll follow it. Tap one to get a reaction.";
+
+/* ================================================================
+   Face design. Units: x right / y up, body is ~2.1 wide, 2.14 tall.
+   Faces are painted on a canvas and projected onto the body from the front.
+   ================================================================ */
+const UVS = 2.6;                       // units covered by the face texture
+const INK = '#3b2433';
+const EYES = [
+  { x: -0.469, y: 1.744, rx: 0.262, ry: 0.118 },
+  { x:  0.151, y: 1.750, rx: 0.283, ry: 0.122 },
+];
+const NOSE_X = -0.182;
+
+function faceCanvas(draw) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 1024;
+  const g = c.getContext('2d');
+  const k = 1024 / UVS;
+  g.setTransform(k, 0, 0, -k, 512, 1024);
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = INK; g.fillStyle = INK;
+  draw(g);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 8;
+  return t;
+}
+const stroke = (g, lw, f) => { g.lineWidth = lw; g.beginPath(); f(); g.stroke(); };
+const poly = (g, lw, pts) => stroke(g, lw, () => { g.moveTo(...pts[0]); for (const p of pts.slice(1)) g.lineTo(...p); });
+
+function whiskersNose(g) {
+  poly(g, 0.012, [[-0.872, 1.585], [-0.699, 1.588]]);
+  poly(g, 0.012, [[-0.858, 1.489], [-0.713, 1.528]]);
+  poly(g, 0.012, [[0.386, 1.651], [0.5625, 1.645]]);
+  poly(g, 0.012, [[0.400, 1.591], [0.551, 1.560]]);
+  poly(g, 0.012, [[NOSE_X, 1.748], [NOSE_X, 1.726]]);
+}
+function brows(g, lift = 0) {
+  for (const x of [-0.202, -0.179, -0.156]) poly(g, 0.01, [[x, 1.909 + lift], [x + 0.002, 1.877 + lift]]);
+}
+function rings(g) {
+  for (const e of EYES) stroke(g, 0.021, () => g.ellipse(e.x, e.y, e.rx, e.ry, 0, 0, Math.PI * 2));
+}
+function chevron(g) { poly(g, 0.013, [[-0.227, 1.651], [NOSE_X, 1.688], [-0.136, 1.651]]); }
+function closedEyes(g, drop = 0) {
+  for (const e of EYES) stroke(g, 0.022, () => {
+    g.moveTo(e.x - e.rx * 0.82, e.y + 0.012 - drop);
+    g.quadraticCurveTo(e.x, e.y - 0.075 - drop, e.x + e.rx * 0.82, e.y + 0.012 - drop);
+  });
+}
+function happyEyes(g) {
+  for (const e of EYES) stroke(g, 0.026, () => {
+    g.moveTo(e.x - e.rx * 0.68, e.y - 0.04);
+    g.quadraticCurveTo(e.x, e.y + 0.13, e.x + e.rx * 0.68, e.y - 0.04);
+  });
+}
+function blush(g, a = 0.65) {
+  for (const [x, y] of [[-0.6, 1.57], [0.3, 1.575]]) {
+    g.save(); g.translate(x, y); g.scale(1, 0.45);
+    const gr = g.createRadialGradient(0, 0, 0, 0, 0, 0.15);
+    gr.addColorStop(0, `rgba(240,110,140,${a})`); gr.addColorStop(1, 'rgba(240,110,140,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(0, 0, 0.15, 0, Math.PI * 2); g.fill(); g.restore();
+  }
+}
+function omega(g) {
+  stroke(g, 0.013, () => {
+    g.moveTo(-0.24, 1.675); g.quadraticCurveTo(-0.211, 1.618, NOSE_X, 1.668);
+    g.quadraticCurveTo(-0.153, 1.618, -0.124, 1.675);
+  });
+}
+function openMouth(g) {
+  const path = () => { g.beginPath(); g.moveTo(-0.27, 1.676); g.lineTo(-0.094, 1.676); g.bezierCurveTo(-0.1, 1.535, -0.264, 1.535, -0.27, 1.676); g.closePath(); };
+  path(); g.fillStyle = '#7a2335'; g.fill();
+  g.save(); path(); g.clip(); g.fillStyle = '#f08a9c'; g.beginPath(); g.ellipse(NOSE_X, 1.575, 0.06, 0.036, 0, 0, Math.PI * 2); g.fill(); g.restore();
+  path(); g.lineWidth = 0.014; g.stroke(); g.fillStyle = INK;
+}
+
+const FACES = {
+  neutral: faceCanvas(g => { whiskersNose(g); brows(g); rings(g); chevron(g); }),
+  blink:   faceCanvas(g => { whiskersNose(g); brows(g); closedEyes(g); chevron(g); }),
+  greet:   faceCanvas(g => { blush(g); whiskersNose(g); brows(g); rings(g); omega(g); }),
+  laugh:   faceCanvas(g => { blush(g, 0.8); whiskersNose(g); happyEyes(g); openMouth(g); }),
+  angry:   faceCanvas(g => {
+    whiskersNose(g); rings(g);
+    poly(g, 0.03, [[-0.70, 1.955], [-0.29, 1.875]]);
+    poly(g, 0.03, [[-0.07, 1.875], [0.39, 1.965]]);
+    poly(g, 0.012, [[-0.262, 1.655], [-0.235, 1.684], [-0.208, 1.655], [-0.182, 1.684], [-0.156, 1.655], [-0.129, 1.684], [-0.102, 1.655]]);
+    g.strokeStyle = '#d9304a';
+    const cx = 0.4, cy = 2.0;
+    for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) stroke(g, 0.022, () => {
+      g.moveTo(cx + sx * 0.03, cy + sy * 0.095); g.quadraticCurveTo(cx + sx * 0.03, cy + sy * 0.03, cx + sx * 0.095, cy + sy * 0.03);
+    });
+    g.strokeStyle = INK;
+  }),
+  sad: faceCanvas(g => {
+    whiskersNose(g); rings(g);
+    poly(g, 0.016, [[-0.66, 1.885], [-0.31, 1.95]]);
+    poly(g, 0.016, [[-0.05, 1.95], [0.33, 1.885]]);
+    stroke(g, 0.013, () => { g.moveTo(-0.24, 1.635); g.quadraticCurveTo(NOSE_X, 1.70, -0.124, 1.635); });
+    const cx = -0.36, cy = 1.555;
+    g.beginPath(); g.moveTo(cx, cy + 0.07); g.quadraticCurveTo(cx + 0.045, cy, cx, cy - 0.035); g.quadraticCurveTo(cx - 0.045, cy, cx, cy + 0.07);
+    g.fillStyle = '#8ccbf2'; g.fill(); g.lineWidth = 0.008; g.stroke(); g.fillStyle = INK;
+  }),
+  surprised: faceCanvas(g => {
+    whiskersNose(g); brows(g, 0.05); rings(g);
+    g.beginPath(); g.ellipse(NOSE_X, 1.625, 0.032, 0.042, 0, 0, Math.PI * 2); g.fillStyle = '#7a2335'; g.fill(); g.lineWidth = 0.013; g.stroke(); g.fillStyle = INK;
+  }),
+  sleepy: faceCanvas(g => {
+    blush(g, 0.4); whiskersNose(g); closedEyes(g, 0.02);
+    stroke(g, 0.012, () => { g.moveTo(-0.215, 1.66); g.quadraticCurveTo(NOSE_X, 1.64, -0.15, 1.66); });
+    g.beginPath(); g.arc(-0.07, 1.67, 0.05, 0, Math.PI * 2); g.fillStyle = 'rgba(170,215,245,0.75)'; g.fill();
+    g.strokeStyle = '#6fa9d1'; g.lineWidth = 0.008; g.stroke(); g.strokeStyle = INK; g.fillStyle = INK;
+  }),
+  cool: faceCanvas(g => {
+    blush(g, 0.75); whiskersNose(g);
+    stroke(g, 0.013, () => { g.moveTo(-0.235, 1.655); g.quadraticCurveTo(-0.17, 1.632, -0.115, 1.672); });
+    const lenses = [[-0.48, 1.74], [0.165, 1.745]], R = 0.2;
+    const layered = f => { g.strokeStyle = INK; stroke(g, 0.085, f); g.strokeStyle = '#ffffff'; stroke(g, 0.058, f); };
+    layered(() => { g.moveTo(-0.67, 1.765); g.lineTo(-0.86, 1.785); });
+    layered(() => { g.moveTo(0.355, 1.765); g.lineTo(0.56, 1.785); });
+    layered(() => { g.moveTo(-0.29, 1.77); g.quadraticCurveTo(-0.16, 1.82, -0.025, 1.77); });
+    for (const [x, y] of lenses) {
+      g.beginPath(); g.arc(x, y, R, 0, Math.PI * 2); g.fillStyle = '#2b2140'; g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      g.beginPath(); g.ellipse(x - 0.075, y + 0.075, 0.038, 0.026, 0.6, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(x + 0.08, y - 0.07, 0.014, 0, Math.PI * 2); g.fill();
+      layered(() => g.arc(x, y, R, 0, Math.PI * 2));
+    }
+    g.strokeStyle = INK; g.fillStyle = INK;
+  }),
+};
+
+const MOODS = {
+  neutral:   { face: 'neutral',   pupil: 1, pupR: 1,    blink: true },
+  greet:     { face: 'greet',     pupil: 1, pupR: 1.05 },
+  laugh:     { face: 'laugh',     pupil: 0, pupR: 1 },
+  angry:     { face: 'angry',     pupil: 1, pupR: 0.6,  look: [0.0, -0.1] },
+  sad:       { face: 'sad',       pupil: 1, pupR: 1,    look: [0.15, -0.9] },
+  surprised: { face: 'surprised', pupil: 1, pupR: 0.45, look: [0, 0.05] },
+  sleepy:    { face: 'sleepy',    pupil: 0, pupR: 1 },
+  cool:      { face: 'cool',      pupil: 0, pupR: 1 },
+};
+
+/* ================================================================
+   Geometry
+   ================================================================ */
+function chaikin(pts, n) {
+  for (let k = 0; k < n; k++) {
+    const out = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      out.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]], [0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]]);
+    }
+    out.push(pts[pts.length - 1]); pts = out;
+  }
+  return pts;
+}
+function lathe(profile, segs, depth, smooth) {
+  const pts = chaikin(profile, smooth).map(([r, y]) => new THREE.Vector2(r, y));
+  const g = new THREE.LatheGeometry(pts, segs, Math.PI, Math.PI * 2);
+  const p = g.attributes.position, n = g.attributes.normal, uv = g.attributes.uv;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    p.setZ(i, p.getZ(i) * depth);
+    v.set(n.getX(i), n.getY(i), n.getZ(i) / depth).normalize();
+    n.setXYZ(i, v.x, v.y, v.z);
+    uv.setXY(i, p.getX(i) / UVS + 0.5, p.getY(i) / UVS);
+  }
+  return g;
+}
+// body profile [height, radius], traced from the drawing: wide low belly, narrower domed head
+const BODY_PROFILE = [[0,0],[0,0.72],[0.03,0.9],[0.12,0.98],[0.4,1.03],[0.8,1.035],[1.15,0.99],[1.45,0.92],[1.75,0.815],[1.96,0.66],[2.08,0.52],[2.17,0.32],[2.2,0]]
+  .map(([y, r]) => [r, y]);
+const GEO = {
+  body: lathe(BODY_PROFILE, 64, 0.85, 2),
+  ear:  lathe([[0.28, -0.12], [0.275, 0.0], [0.17, 0.42], [0.06, 0.7], [0.0, 0.78]], 28, 1, 2),
+  paw:  new THREE.SphereGeometry(1, 24, 16),
+};
+
+/* ================================================================
+   Materials: cel shading + inverted-hull outlines
+   ================================================================ */
+const hex = h => { const c = new THREE.Color(); c.setHex(parseInt(h.slice(1), 16), THREE.NoColorSpace); return new THREE.Vector3(c.r, c.g, c.b); };
+const toUV = (x, y) => new THREE.Vector2(x / UVS + 0.5, y / UVS);
+
+const TOON_VS = /* glsl */`
+  varying vec3 vN; varying vec2 vUv; varying float vFront;
+  void main() {
+    vUv = uv;
+    vN = normalize(normalMatrix * normal);
+    vFront = smoothstep(-0.12, 0.04, normal.z);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+const TOON_FS = /* glsl */`
+  uniform sampler2D uFace; uniform float uHasFace;
+  uniform vec3 uBase, uMid, uShadow, uInk, uLight;
+  uniform float uTint, uPupil, uPupR;
+  uniform vec2 uEyeC[2]; uniform vec2 uEyeR[2]; uniform vec2 uLook;
+  varying vec3 vN; varying vec2 vUv; varying float vFront;
+  void main() {
+    vec3 n = normalize(vN);
+    float d = dot(n, normalize(uLight));
+    float aa = fwidth(d) * 1.2 + 0.002;
+    vec3 col = mix(uShadow, uMid, smoothstep(-0.14 - aa, -0.14 + aa, d));
+    col = mix(col, uBase, smoothstep(0.28 - aa, 0.28 + aa, d));
+    col = mix(col, col * vec3(1.0, 0.74, 0.72), uTint);
+    if (uHasFace > 0.5) {
+      vec4 f = texture2D(uFace, vUv);
+      col = mix(col, f.rgb, f.a * vFront);
+      float pa = 0.0, hl = 0.0;
+      for (int i = 0; i < 2; i++) {
+        vec2 c = uEyeC[i], r = uEyeR[i];
+        vec2 pc = c + uLook * r * 0.62;
+        float ring = 1.0 - smoothstep(0.88, 0.95, length((vUv - c) / r));
+        float dp = length(vUv - pc), w = fwidth(dp);
+        pa = max(pa, (1.0 - smoothstep(uPupR - w, uPupR + w, dp)) * ring);
+        float dh = length(vUv - (pc + vec2(-0.36, 0.36) * uPupR));
+        float hr = uPupR * 0.27;
+        hl = max(hl, (1.0 - smoothstep(hr - w, hr + w, dh)) * ring);
+      }
+      float on = uPupil * vFront;
+      col = mix(col, uInk, pa * on);
+      col = mix(col, vec3(1.0), hl * on * 0.9);
+    }
+    gl_FragColor = vec4(col, 1.0);
+  }`;
+
+const LIGHT = new THREE.Vector3(-0.5, 0.62, 0.6).normalize();
+const PAL = { base: hex('#fcf8f6'), mid: hex('#e3e3f3'), shadow: hex('#c4c7e8'), ink: hex('#3b2433') };
+const PUP_R = 0.055 / UVS;
+
+function toonMaterial(hasFace) {
+  return new THREE.ShaderMaterial({
+    vertexShader: TOON_VS, fragmentShader: TOON_FS,
+    uniforms: {
+      uFace: { value: FACES.neutral }, uHasFace: { value: hasFace ? 1 : 0 },
+      uBase: { value: PAL.base }, uMid: { value: PAL.mid }, uShadow: { value: PAL.shadow }, uInk: { value: PAL.ink },
+      uLight: { value: LIGHT }, uTint: { value: 0 }, uPupil: { value: 1 }, uPupR: { value: PUP_R },
+      uEyeC: { value: EYES.map(e => toUV(e.x, e.y)) },
+      uEyeR: { value: EYES.map(e => new THREE.Vector2(e.rx / UVS, e.ry / UVS)) },
+      uLook: { value: new THREE.Vector2(0, 0.8) },
+    },
+  });
+}
+function outlineMaterial(thick) {
+  return new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    uniforms: { uThick: { value: thick }, uColor: { value: PAL.ink } },
+    vertexShader: `uniform float uThick; void main(){ gl_Position = projectionMatrix * modelViewMatrix * vec4(position + normal * uThick, 1.0); }`,
+    fragmentShader: `uniform vec3 uColor; void main(){ gl_FragColor = vec4(uColor, 1.0); }`,
+  });
+}
+const OUTLINE = { body: outlineMaterial(0.022), ear: outlineMaterial(0.02), paw: outlineMaterial(0.11) };
+
+/* ================================================================
+   Cat
+   ================================================================ */
+const damp = (a, b, l, dt) => a + (b - a) * (1 - Math.exp(-l * dt));
+const easeOut = x => 1 - Math.pow(1 - x, 3);
+const easeOutBack = x => { const c = 1.9; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const clamp01 = x => Math.min(Math.max(x, 0), 1);
+
+class Cat {
+  constructor({ home = 'neutral', rest = new THREE.Vector2(-0.2, 0.85), phase = 0 } = {}) {
+    this.root = new THREE.Group();
+    this.bob = new THREE.Group(); this.root.add(this.bob);
+    this.mat = toonMaterial(true); this.skin = toonMaterial(false);
+    this.body = new THREE.Mesh(GEO.body, this.mat);
+    this.bob.add(this.body, new THREE.Mesh(GEO.body, OUTLINE.body));
+
+    const ear = (x, y, tilt) => {
+      const p = new THREE.Group(); p.position.set(x, y, -0.03); p.userData.tilt = tilt;
+      const m = new THREE.Mesh(GEO.ear, this.skin), o = new THREE.Mesh(GEO.ear, OUTLINE.ear);
+      m.scale.z = o.scale.z = 0.55;
+      p.add(m, o); this.bob.add(p); return p;
+    };
+    this.earL = ear(-0.43, 1.68, 0.22);
+    this.earR = ear(0.43, 1.65, -0.19);
+
+    this.pawP = new THREE.Group(); this.pawP.position.set(0.9, 1.0, 0.2);
+    const pm = new THREE.Mesh(GEO.paw, this.skin), po = new THREE.Mesh(GEO.paw, OUTLINE.paw);
+    for (const m of [pm, po]) { m.position.set(0.2, 0.22, 0); m.scale.set(0.16, 0.28, 0.15); m.rotation.z = -0.75; }
+    this.pawP.add(pm, po); this.pawP.visible = false; this.bob.add(this.pawP);
+
+    this.home = home; this.rest = rest; this.phase = phase;
+    this.look = rest.clone(); this.lag = 0.6 + Math.random() * 0.8;
+    this.s = { x: 0, y: 0, sx: 1, sy: 1, rz: 0, es: 0, eb: 0, eu: 1, paw: 0, tint: 0, pupR: 1 };
+    this.blinkT = 1 + Math.random() * 5; this.blinking = 0;
+    this.introY = 0;
+    this.setMood(home);
+  }
+  setMood(m, dur = 0) { this.mood = m; this.mt = 0; this.dur = dur; }
+  bump() { if (this.bumpT !== undefined && this.bumpT < 0.7) return; this.bumpT = 0; }
+
+  update(t, dt, lookTarget, idleAmp = 1) {
+    this.mt += dt;
+    if (this.dur && this.mt > this.dur) this.setMood(this.home);
+    const M = MOODS[this.mood], mt = this.mt, s = this.s;
+
+    // blink
+    this.blinkT -= dt;
+    if (this.blinkT <= 0) { this.blinking = 0.13; this.blinkT = 2.5 + Math.random() * 5; }
+    if (this.blinking > 0) this.blinking -= dt;
+    const blink = M.blink && this.blinking > 0;
+
+    const U = this.mat.uniforms;
+    U.uFace.value = FACES[blink ? 'blink' : M.face];
+    U.uPupil.value = blink ? 0 : M.pupil;
+    const tgt = M.look ? _v2.set(M.look[0], M.look[1]) : lookTarget;
+    this.look.x = damp(this.look.x, tgt.x, 9 * this.lag, dt);
+    this.look.y = damp(this.look.y, tgt.y, 9 * this.lag, dt);
+    U.uLook.value.copy(this.look);
+    s.pupR = damp(s.pupR, M.pupR, 14, dt);
+    U.uPupR.value = PUP_R * s.pupR;
+
+    // motion targets
+    let x = 0, y = 0, sx = 1, sy = 1, rz = 0, es = 0, eb = 0, eu = 1, paw = 0, pawRot = 0, tint = 0;
+    const b = Math.sin(t * 2.1 + this.phase) * idleAmp;
+    sy += 0.018 * b; sx -= 0.008 * b;
+    switch (this.mood) {
+      case 'greet': {
+        const h = mt < 0.55 ? Math.sin(mt / 0.55 * Math.PI) : 0;
+        y = 0.4 * h; sy *= 1 + 0.1 * h; sx *= 1 - 0.05 * h;
+        rz = Math.sin(mt * 5) * 0.05 * Math.min(mt, 1);
+        paw = clamp01((mt - 0.3) / 0.25); pawRot = 0.15 + Math.sin(mt * 11) * 0.4;
+        es = Math.sin(mt * 8) * 0.12; break;
+      }
+      case 'laugh': {
+        const k = Math.min(mt / 0.2, 1), bo = Math.abs(Math.sin(mt * 13));
+        y = 0.09 * bo * k; sy *= 1 + (0.05 * bo - 0.025) * k; sx *= 1 - (0.03 * bo - 0.015) * k;
+        rz = Math.sin(mt * 6.5) * 0.06 * k; es = 0.18 * bo * k; break;
+      }
+      case 'angry': {
+        const k = Math.min(mt / 0.25, 1);
+        sx *= 1 + 0.08 * k; sy *= 1 + 0.05 * k; x = Math.sin(mt * 70) * 0.018 * k;
+        eb = 0.55 * k; es = 0.45 * k; tint = k; break;
+      }
+      case 'sad': {
+        const k = easeOut(Math.min(mt / 0.6, 1));
+        sy *= 1 - 0.08 * k; sx *= 1 + 0.05 * k; rz = (-0.07 + Math.sin(mt * 1.3) * 0.02) * k;
+        es = 0.85 * k; eb = 0.15 * k; break;
+      }
+      case 'surprised': {
+        if (mt < 0.1) { const q = mt / 0.1; sy *= 1 - 0.14 * q; sx *= 1 + 0.08 * q; }
+        else if (mt < 0.6) { const q = (mt - 0.1) / 0.5; y = 0.85 * 4 * q * (1 - q); sy *= 1 + 0.16 * (1 - q); sx *= 1 - 0.08 * (1 - q); }
+        else if (mt < 0.85) { const q = Math.sin((mt - 0.6) / 0.25 * Math.PI); sy *= 1 - 0.14 * q; sx *= 1 + 0.08 * q; }
+        eu = 1 + 0.25 * Math.min(mt / 0.15, 1); break;
+      }
+      case 'sleepy': {
+        const k = Math.min(mt / 1.2, 1), w = Math.sin(t * 1.1);
+        rz = 0.11 * easeOut(k); sy *= 1 + 0.03 * w * k; sx *= 1 - 0.012 * w * k; es = 0.4 * k; break;
+      }
+      case 'cool': {
+        y = Math.abs(Math.sin(t * 3.4 + this.phase)) * 0.045 * idleAmp;
+        rz = Math.sin(t * 1.7) * 0.03 * idleAmp; break;
+      }
+    }
+    if (this.bumpT !== undefined) {
+      this.bumpT += dt; const bt = this.bumpT;
+      if (bt < 0.09) { const q = bt / 0.09; sy *= 1 - 0.14 * q; sx *= 1 + 0.08 * q; }
+      else if (bt < 0.5) {
+        const q = (bt - 0.09) / 0.41;
+        y += 0.55 * 4 * q * (1 - q);
+        sy *= 1 + 0.13 * (1 - q); sx *= 1 - 0.06 * (1 - q);
+        es += Math.sin(q * Math.PI) * 0.3;
+      } else if (bt < 1.0) {
+        const q = (bt - 0.5) / 0.5, w = Math.sin(q * Math.PI * 3) * (1 - q);
+        sy *= 1 - 0.13 * w; sx *= 1 + 0.07 * w;
+      } else this.bumpT = undefined;
+    }
+
+    const L = 30;
+    s.x = damp(s.x, x, L, dt); s.y = damp(s.y, y, L, dt); s.sx = damp(s.sx, sx, L, dt); s.sy = damp(s.sy, sy, L, dt);
+    s.rz = damp(s.rz, rz, L, dt); s.es = damp(s.es, es, 12, dt); s.eb = damp(s.eb, eb, 12, dt); s.eu = damp(s.eu, eu, 14, dt);
+    s.paw = damp(s.paw, paw, 14, dt); s.tint = damp(s.tint, tint, 6, dt);
+
+    this.bob.position.set(s.x, s.y + this.introY, 0);
+    this.bob.scale.set(s.sx, s.sy, s.sx);
+    this.bob.rotation.z = s.rz;
+    this.earL.rotation.set(-0.08 - s.eb, 0, this.earL.userData.tilt + s.es);
+    this.earR.rotation.set(-0.08 - s.eb, 0, this.earR.userData.tilt - s.es);
+    this.earL.scale.y = this.earR.scale.y = s.eu;
+    this.pawP.visible = s.paw > 0.01;
+    this.pawP.scale.setScalar(Math.max(s.paw, 0.001));
+    this.pawP.rotation.z = pawRot;
+    U.uTint.value = this.skin.uniforms.uTint.value = s.tint;
+  }
+  dispose() { this.mat.dispose(); this.skin.dispose(); }
+}
+const _v2 = new THREE.Vector2();
+
+/* ================================================================
+   Hero: the herd
+   ================================================================ */
+function mulberry(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const herdCanvas = document.getElementById('herd');
+const hero = document.querySelector('.hero');
+const hr = new THREE.WebGLRenderer({ canvas: herdCanvas, antialias: true, alpha: true });
+hr.setPixelRatio(Math.min(devicePixelRatio, 2));
+const hScene = new THREE.Scene();
+const hCam = new THREE.PerspectiveCamera(26, 1, 0.1, 200);
+const herd = [];
+const herdGroup = new THREE.Group(); hScene.add(herdGroup);
+let builtAspect = 0, coolCat = null, startT = 0;
+
+function frameCamera(aspect) {
+  // portrait screens need a taller crowd; landscape keeps the upper half free for the headline
+  const portrait = aspect < 1;
+  hCam.fov = portrait ? 36 : 28;
+  hCam.aspect = aspect;
+  hCam.position.set(0, portrait ? 5.2 : 5.4, portrait ? 17 : 19);
+  hCam.lookAt(0, portrait ? 4.0 : 4.3, 0);
+  hCam.updateProjectionMatrix();
+}
+
+// cats per row, front row first; both layouts add up to 34
+const ROWS_WIDE = [6, 7, 7, 7, 7];
+const ROWS_TALL = [3, 4, 4, 4, 5, 5, 4, 5];
+
+function buildHerd(aspect) {
+  herd.forEach(c => c.dispose()); herd.length = 0; herdGroup.clear();
+  const rand = mulberry(7);
+  const portrait = aspect < 1;
+  const rows = portrait ? ROWS_TALL : ROWS_WIDE;
+  const vf = THREE.MathUtils.degToRad(hCam.fov) / 2;
+  const centerX = portrait ? 0 : 1.2;
+  const coolRow = portrait ? 3 : 2;
+
+  // work out each row's depth and cat size so every row spans the screen
+  const plan = [];
+  let z = 2, lift = 0;
+  rows.forEach((n, r) => {
+    const halfW = Math.tan(vf) * (hCam.position.z - z) * aspect;
+    const sp = (halfW * 2) / (n - 0.75);
+    const sc = Math.min(sp / 2.12, 2.2);
+    plan.push({ n, z, halfW, sp, sc, lift });
+    lift += (portrait ? 0.84 : 0.64) * sc;
+    z -= 1.8 * sc;
+  });
+
+  let best = Infinity;
+  for (let r = rows.length - 1; r >= 0; r--) {
+    const { n, z: rz, halfW, sp, sc, lift: ly } = plan[r];
+    const stagger = (r % 2 ? 0.25 : -0.25) * sp;
+    for (let i = 0; i < n; i++) {
+      const x = (i - (n - 1) / 2) * sp + stagger + (rand() - 0.5) * 0.3 * sc;
+      // the crowd climbs toward the right on wide screens, leaving room for the headline
+      const rise = portrait ? 1 : 0.08 + 0.92 * THREE.MathUtils.smoothstep(x / halfW, -0.55, 0.35);
+      const y = ly * rise - (portrait ? 1.1 : 0.8) * plan[0].sc;
+      const cat = new Cat({ rest: new THREE.Vector2(-0.55 + rand() * 0.8, 0.8 + rand() * 0.2), phase: rand() * 6.28 });
+      cat.root.position.set(x, y, rz + (rand() - 0.5) * 0.4 * sc);
+      cat.root.scale.setScalar(sc * (0.94 + rand() * 0.12));
+      cat.root.rotation.y = Math.atan2(-x, hCam.position.z - rz) * -0.45 + (rand() - 0.5) * 0.3;
+      cat.root.rotation.z = (rand() - 0.5) * 0.06;
+      cat.intro = REDUCED ? -1 : 0.1 + (rows.length - r) * 0.08 + rand() * 0.25;
+      herd.push(cat); herdGroup.add(cat.root);
+      if (r === coolRow && Math.abs(x - centerX) < best) { best = Math.abs(x - centerX); coolCat = cat; }
+    }
+  }
+  coolCat.home = 'cool'; coolCat.setMood('cool');
+  coolCat.root.rotation.y = 0;
+  builtAspect = aspect; startT = clock.elapsedTime;
+}
+
+const clock = new THREE.Clock();
+function resizeHero() {
+  const w = hero.clientWidth, h = hero.clientHeight;
+  hr.setSize(w, h, false);
+  const aspect = w / h;
+  frameCamera(aspect);
+  if (!builtAspect || Math.abs(aspect - builtAspect) / builtAspect > 0.12 || (aspect < 1) !== (builtAspect < 1)) buildHerd(aspect);
+}
+
+// pointer tracking
+const ptr = { x: 0, y: 0, last: -99, inHero: false };
+function setPtr(e) {
+  const r = herdCanvas.getBoundingClientRect();
+  ptr.x = (e.clientX - r.left) / r.width * 2 - 1;
+  ptr.y = -((e.clientY - r.top) / r.height * 2 - 1);
+  ptr.cx = e.clientX; ptr.cy = e.clientY;
+  ptr.last = clock.elapsedTime;
+}
+addEventListener('pointermove', setPtr, { passive: true });
+
+const _p = new THREE.Vector3(), _q = new THREE.Vector3();
+function screenOf(cat, h, out) {
+  cat.root.updateWorldMatrix(true, false);
+  return out.set(0, h, 0).applyMatrix4(cat.root.matrixWorld).project(hCam);
+}
+function pickCat(mx, my) {
+  let hit = null, bestZ = -Infinity;
+  for (const c of herd) {
+    const ctr = screenOf(c, 1.05, _p);
+    const edge = _q.set(1.05, 1.05, 0).applyMatrix4(c.root.matrixWorld).project(hCam);
+    const rx = Math.abs(edge.x - ctr.x), ry = rx * hCam.aspect * 1.05;
+    const dx = (mx - ctr.x) / rx, dy = (my - ctr.y) / ry;
+    if (dx * dx + dy * dy < 1 && c.root.position.z > bestZ) { bestZ = c.root.position.z; hit = c; }
+  }
+  return hit;
+}
+
+const hint = document.getElementById('hint');
+const REACTIONS = ['laugh', 'greet', 'surprised', 'angry', 'sad', 'sleepy', 'laugh', 'greet'];
+let hovered = null;
+herdCanvas.addEventListener('pointermove', e => {
+  if (e.pointerType !== 'mouse') return;
+  setPtr(e);
+  const c = pickCat(ptr.x, ptr.y);
+  herdCanvas.classList.toggle('is-pointing', !!c);
+  if (c !== hovered) { hovered = c; if (c) c.bump(); }
+});
+herdCanvas.addEventListener('pointerleave', () => { hovered = null; herdCanvas.classList.remove('is-pointing'); });
+herdCanvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') return;
+  setPtr(e);
+  pickCat(ptr.x, ptr.y)?.bump();
+});
+herdCanvas.addEventListener('click', e => {
+  setPtr(e);
+  const c = pickCat(ptr.x, ptr.y);
+  if (!c) return;
+  if (c === coolCat) {
+    c.bump();
+    const o = coolCat.root.position;
+    for (const other of herd) if (other !== c) {
+      const d = other.root.position.distanceTo(o);
+      setTimeout(() => other.setMood('laugh', 2.6), d * 55);
+    }
+    hint.textContent = "You found him. Now everyone's laughing.";
+    hint.classList.add('is-found');
+  } else {
+    c.bumpT = undefined; c.bump();
+    const m = REACTIONS[Math.floor(Math.random() * REACTIONS.length)];
+    c.setMood(m, m === 'sleepy' ? 3.4 : 2.8);
+  }
+});
+
+let heroVisible = true;
+new IntersectionObserver(([e]) => heroVisible = e.isIntersecting).observe(hero);
+
+function updateHerd(t, dt) {
+  const tracking = t - ptr.last < 3.5;
+  for (const c of herd) {
+    let tgt = c.rest;
+    if (tracking) {
+      const s = screenOf(c, 1.75 * 1, _p);
+      const dx = (ptr.x - s.x) * hCam.aspect, dy = ptr.y - s.y;
+      const len = Math.hypot(dx, dy) || 1, k = Math.min(1, len * 2.4) / len;
+      tgt = _v2b.set(dx * k, dy * k);
+    }
+    if (c.intro >= 0) {
+      const q = clamp01((t - startT - c.intro) / 0.55);
+      c.introY = -3.2 * (1 - easeOutBack(q));
+      if (q >= 1) { c.intro = -1; c.introY = 0; }
+    }
+    c.update(t, dt, tgt, REDUCED ? 0 : 1);
+  }
+}
+const _v2b = new THREE.Vector2();
+
+/* ================================================================
+   Mood viewer
+   ================================================================ */
+const vCanvas = document.getElementById('viewer');
+const vr = new THREE.WebGLRenderer({ canvas: vCanvas, antialias: true, alpha: true });
+vr.setPixelRatio(Math.min(devicePixelRatio, 2));
+const vScene = new THREE.Scene();
+const vCam = new THREE.PerspectiveCamera(28, 1, 0.1, 50);
+vCam.position.set(0, 1.55, 9.6); vCam.lookAt(0, 1.3, 0);
+const star = new Cat({ rest: new THREE.Vector2(-0.3, 0.85) });
+vScene.add(star.root);
+const shadow = new THREE.Mesh(new THREE.CircleGeometry(1.15, 48), new THREE.MeshBasicMaterial({ color: 0xe9bfcb }));
+shadow.rotation.x = -Math.PI / 2; shadow.scale.set(1, 0.55, 1); shadow.position.y = -0.005;
+vScene.add(shadow);
+
+// floating Z's for sleepy
+const zCanvas = document.createElement('canvas'); zCanvas.width = zCanvas.height = 128;
+function drawZ() {
+  const g = zCanvas.getContext('2d'); g.clearRect(0, 0, 128, 128);
+  g.font = '400 110px "Bagel Fat One", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = INK; g.fillText('z', 64, 70);
+}
+drawZ();
+const zTex = new THREE.CanvasTexture(zCanvas); zTex.colorSpace = THREE.SRGBColorSpace;
+document.fonts?.ready.then(() => { drawZ(); zTex.needsUpdate = true; });
+const zs = [0, 1, 2].map(() => { const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: zTex, transparent: true, opacity: 0 })); vScene.add(s); return s; });
+
+const vState = { rot: 0, target: 0, drag: null, lastDrag: -99 };
+vCanvas.addEventListener('pointerdown', e => { vState.drag = { x: e.clientX, r: vState.target, moved: 0 }; vCanvas.setPointerCapture(e.pointerId); });
+vCanvas.addEventListener('pointerenter', () => star.bump());
+vCanvas.addEventListener('pointermove', e => { if (vState.drag) { vState.target = vState.drag.r + (e.clientX - vState.drag.x) * 0.012; vState.lastDrag = clock.elapsedTime; } });
+const endDrag = e => {
+  if (vState.drag && e && Math.abs(e.clientX - vState.drag.x) < 5) { star.bumpT = undefined; star.bump(); }
+  vState.drag = null; vState.lastDrag = clock.elapsedTime;
+};
+vCanvas.addEventListener('pointerup', endDrag); vCanvas.addEventListener('pointercancel', endDrag);
+
+const buttons = [...document.querySelectorAll('#mood-list button')];
+for (const btn of buttons) btn.addEventListener('click', () => {
+  for (const b of buttons) b.setAttribute('aria-pressed', String(b === btn));
+  star.home = btn.dataset.mood; star.setMood(star.home);
+});
+
+const stage = document.querySelector('.stage');
+let viewerVisible = false;
+new IntersectionObserver(([e]) => viewerVisible = e.isIntersecting).observe(stage);
+function resizeViewer() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  vr.setSize(w, h, false); vCam.aspect = w / h; vCam.updateProjectionMatrix();
+}
+
+function updateViewer(t, dt) {
+  // eyes follow the pointer relative to the viewer
+  let tgt = star.rest;
+  if (t - ptr.last < 3.5 && ptr.cx !== undefined) {
+    const r = vCanvas.getBoundingClientRect();
+    const head = _p.set(0, 1.75, 0).applyMatrix4(star.root.matrixWorld).project(vCam);
+    const hx = r.left + (head.x + 1) / 2 * r.width, hy = r.top + (1 - head.y) / 2 * r.height;
+    const dx = ptr.cx - hx, dy = -(ptr.cy - hy);
+    const len = Math.hypot(dx, dy) || 1, k = Math.min(1, len / 160) / len;
+    tgt = _v2b.set(dx * k, dy * k);
+  }
+  if (!vState.drag && t - vState.lastDrag > 1.6) vState.target = damp(vState.target, Math.round(vState.target / (Math.PI * 2)) * Math.PI * 2, 3, dt);
+  vState.rot = damp(vState.rot, vState.target, 12, dt);
+  star.root.rotation.y = vState.rot;
+  star.update(t, dt, tgt, REDUCED ? 0 : 1);
+  shadow.scale.set(star.s.sx / (1 + star.s.y * 0.5), 0.55 * star.s.sx / (1 + star.s.y * 0.5), 1);
+
+  const sleepy = star.mood === 'sleepy';
+  zs.forEach((z, i) => {
+    const q = ((t * 0.42 + i / 3) % 1);
+    z.position.set(0.55 + q * 0.75 + Math.sin(q * 6) * 0.06, 2.05 + q * 1.0, 0.2);
+    z.scale.setScalar(0.18 + q * 0.3);
+    z.material.opacity = sleepy ? Math.sin(q * Math.PI) : damp(z.material.opacity, 0, 8, dt);
+  });
+}
+
+/* ================================================================
+   Loop
+   ================================================================ */
+function onResize() { resizeHero(); resizeViewer(); }
+addEventListener('resize', onResize);
+onResize();
+
+function loop() {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  if (heroVisible) { updateHerd(t, dt); hr.render(hScene, hCam); }
+  if (viewerVisible) { updateViewer(t, dt); vr.render(vScene, vCam); }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
